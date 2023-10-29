@@ -149,6 +149,12 @@ const CHAR16* GetPixelFormatUnicode(EFI_GRAPHICS_PIXEL_FORMAT fmt) {
   }
 }
 
+// #@@range_begin(halt)
+void Halt(void) {
+  while (1) __asm__("hlt");
+}
+// #@@range_end(halt)
+
 EFI_STATUS EFIAPI UefiMain(
     EFI_HANDLE image_handle,
     EFI_SYSTEM_TABLE* system_table) {
@@ -203,9 +209,13 @@ EFI_STATUS EFIAPI UefiMain(
   UINTN kernel_file_size = file_info->FileSize;
 
   EFI_PHYSICAL_ADDRESS kernel_base_addr = 0x100000;
-  gBS->AllocatePages(
+  status = gBS->AllocatePages(
       AllocateAddress, EfiLoaderData,
       (kernel_file_size + 0xfff) / 0x1000, &kernel_base_addr);
+  if(EFI_ERROR(status)){
+    Print(L"failed to allocate pages: %r", status);
+    Halt();
+  }
   kernel_file->Read(kernel_file, &kernel_file_size, (VOID*)kernel_base_addr);
   Print(L"Kernel: 0x%0lx (%lu bytes)\n", kernel_base_addr, kernel_file_size);
   // #@@range_end(read_kernel)
@@ -217,12 +227,12 @@ EFI_STATUS EFIAPI UefiMain(
     status = GetMemoryMap(&memmap);
     if (EFI_ERROR(status)) {
       Print(L"failed to get memory map: %r\n", status);
-      while (1);
+      Halt();
     }
     status = gBS->ExitBootServices(image_handle, memmap.map_key);
     if (EFI_ERROR(status)) {
       Print(L"Could not exit boot service: %r\n", status);
-      while (1);
+      Halt();
     }
   }
   // #@@range_end(exit_bs)
