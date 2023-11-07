@@ -26,24 +26,24 @@ struct ArrayLength<T[N]> {
  */
 template <typename T>
 class MemMapRegister {
-  public:
-   T Read() const {
+ public:
+  T Read() const {
     T tmp;
     for (size_t i = 0; i < len_; ++i) {
       tmp.data[i] = value_.data[i];
     }
     return tmp;
-   }
+  }
 
-   void Write(const T& value) {
+  void Write(const T& value) {
     for (size_t i = 0; i < len_; ++i) {
       value_.data[i] = value.data[i];
     }
-   }
-  
-  private:
-    volatile T value_;
-    static const size_t len_ = ArrayLength<decltype(T::data)>::value;
+  }
+
+ private:
+  volatile T value_;
+  static const size_t len_ = ArrayLength<decltype(T::data)>::value;
 };
 
 template <typename T>
@@ -71,12 +71,12 @@ struct DefaultBitmap {
 
 template <typename T>
 class ArrayWrapper {
-  public:
-   using ValueType = T;
-   using Iterator = ValueType*;
-   using ConstIterator = const ValueType*;  
+ public:
+  using ValueType = T;
+  using Iterator = ValueType*;
+  using ConstIterator = const ValueType*;
 
-   ArrayWrapper(uintptr_t array_base_addr, size_t size)
+  ArrayWrapper(uintptr_t array_base_addr, size_t size)
       : array_(reinterpret_cast<ValueType*>(array_base_addr)),
         size_(size) {}
 

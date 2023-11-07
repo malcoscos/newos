@@ -82,12 +82,12 @@ extern "C" void KernelMain(const FrameBufferConfig& frame_buffer_config) {
   switch (frame_buffer_config.pixel_format) {
     case kPixelRGBResv8BitPerColor:
       pixel_writer = new(pixel_writer_buf)
-      RGBResv8BitPerColorPixelWriter{frame_buffer_config};
-    break;
+        RGBResv8BitPerColorPixelWriter{frame_buffer_config};
+      break;
     case kPixelBGRResv8BitPerColor:
       pixel_writer = new(pixel_writer_buf)
-      BGRResv8BitPerColorPixelWriter{frame_buffer_config};
-    break;
+        BGRResv8BitPerColorPixelWriter{frame_buffer_config};
+      break;
   }
 
   const int kFrameWidth = frame_buffer_config.horizontal_resolution;
@@ -207,4 +207,3 @@ extern "C" void KernelMain(const FrameBufferConfig& frame_buffer_config) {
 extern "C" void __cxa_pure_virtual() {
   while (1) __asm__("hlt");
 }
-  

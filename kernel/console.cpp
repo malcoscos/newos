@@ -26,7 +26,7 @@ void Console::PutString(const char* s) {
     }
     ++s;
   }
-} 
+}
 
 void Console::Newline() {
   cursor_column_ = 0;
@@ -35,7 +35,7 @@ void Console::Newline() {
   } else {
     for (int y = 0; y < 16 * kRows; ++y) {
       for (int x = 0; x < 8 * kColumns; ++x) {
-        writer_.Write(x, y, bg_color_); 
+        writer_.Write(x, y, bg_color_);
       }
     }
     for (int row = 0; row < kRows - 1; ++row) {
