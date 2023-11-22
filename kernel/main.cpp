@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "frame_buffer_config.hpp"
+#include "memory_map.hpp"
 #include "graphics.hpp"
 #include "mouse.hpp"
 #include "font.hpp"
@@ -26,6 +27,8 @@
 #include "interrupt.hpp"
 #include "asmfunc.h"
 #include "queue.hpp"
+#include "segment.hpp"
+#include "paging.hpp"
 
 const PixelColor kDesktopBGColor{45, 118, 237};
 const PixelColor kDesktopFGColor{255, 255, 255};
@@ -79,7 +82,6 @@ void SwitchEhci2Xhci(const pci::Device& xhc_dev) {
 
 usb::xhci::Controller* xhc;
 
-// #@@range_begin(queue_message)
 struct Message {
   enum Type {
     kInterruptXHCI,
@@ -87,18 +89,22 @@ struct Message {
 };
 
 ArrayQueue<Message>* main_queue;
-// #@@range_end(queue_message)
 
-// #@@range_begin(xhci_handler)
 __attribute__((interrupt))
 void IntHandlerXHCI(InterruptFrame* frame) {
   main_queue->Push(Message{Message::kInterruptXHCI});
   NotifyEndOfInterrupt();
 }
-// #@@range_end(xhci_handler)
 
-extern "C" void KernelMain(const FrameBufferConfig& frame_buffer_config) {
-  switch (frame_buffer_config.pixel_format) {
+// #@@range_begin(main_new_stack)
+alignas(16) uint8_t kernel_main_stack[1024 * 1024];
+
+extern "C" void KernelMainNewStack(
+    const FrameBufferConfig& frame_buffer_config_ref,
+    const MemoryMap& memory_map_ref) {
+  FrameBufferConfig frame_buffer_config{frame_buffer_config_ref};
+  MemoryMap memory_map{memory_map_ref};
+switch (frame_buffer_config.pixel_format) {
     case kPixelRGBResv8BitPerColor:
       pixel_writer = new(pixel_writer_buf)
         RGBResv8BitPerColorPixelWriter{frame_buffer_config};
@@ -134,6 +140,31 @@ extern "C" void KernelMain(const FrameBufferConfig& frame_buffer_config) {
   };
   printk("Welcome to MikanOS!\n");
   SetLogLevel(kWarn);
+
+  SetupSegments();
+
+  const uint16_t kernel_cs = 1 << 3;
+  const uint16_t kernel_ss = 2 << 3;
+  SetDSAll(0);
+  SetCSSS(kernel_cs, kernel_ss);
+
+  SetupIdentityPageTable();
+  // #@@range_end(setup_segments_and_page)
+
+  const auto memory_map_base = reinterpret_cast<uintptr_t>(memory_map.buffer);
+  for (uintptr_t iter = memory_map_base;
+       iter < memory_map_base + memory_map.map_size;
+       iter += memory_map.descriptor_size) {
+    auto desc = reinterpret_cast<MemoryDescriptor*>(iter);
+    if (IsAvailable(static_cast<MemoryType>(desc->type))) {
+      printk("type = %u, phys = %08lx - %08lx, pages = %lu, attr = %08lx\n",
+          desc->type,
+          desc->physical_start,
+          desc->physical_start + desc->number_of_pages * 4096 - 1,
+          desc->number_of_pages,
+          desc->attribute);
+    }
+  }
 
   mouse_cursor = new(mouse_cursor_buf) MouseCursor{
     pixel_writer, kDesktopBGColor, {300, 200}
@@ -172,9 +203,8 @@ extern "C" void KernelMain(const FrameBufferConfig& frame_buffer_config) {
         xhc_dev->bus, xhc_dev->device, xhc_dev->function);
   }
 
-  const uint16_t cs = GetCS();
   SetIDTEntry(idt[InterruptVector::kXHCI], MakeIDTAttr(DescriptorType::kInterruptGate, 0),
-              reinterpret_cast<uint64_t>(IntHandlerXHCI), cs);
+              reinterpret_cast<uint64_t>(IntHandlerXHCI), kernel_cs);
   LoadIDT(sizeof(idt) - 1, reinterpret_cast<uintptr_t>(&idt[0]));
 
   const uint8_t bsp_local_apic_id = 
@@ -218,7 +248,6 @@ extern "C" void KernelMain(const FrameBufferConfig& frame_buffer_config) {
       }
     }
   }
-
 
   while (true) {
     __asm__("cli");

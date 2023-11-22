@@ -10,14 +10,16 @@
 #include  <Protocol/BlockIo.h>
 #include  <Guid/FileInfo.h>
 #include  "frame_buffer_config.hpp"
+// #@@range_begin(include_map_header)
 #include  "memory_map.hpp"
+// #@@range_end(include_map_header)
 #include  "elf.hpp"
 
 EFI_STATUS GetMemoryMap(struct MemoryMap* map) {
   if (map->buffer == NULL) {
     return EFI_BUFFER_TOO_SMALL;
   }
- 
+
   map->map_size = map->buffer_size;
   return gBS->GetMemoryMap(
       &map->map_size,
@@ -115,11 +117,13 @@ EFI_STATUS OpenRootDir(EFI_HANDLE image_handle, EFI_FILE_PROTOCOL** root) {
 
   return fs->OpenVolume(fs, root);
 }
+
 EFI_STATUS OpenGOP(EFI_HANDLE image_handle,
                    EFI_GRAPHICS_OUTPUT_PROTOCOL** gop) {
   EFI_STATUS status;
   UINTN num_gop_handles = 0;
   EFI_HANDLE* gop_handles = NULL;
+
   status = gBS->LocateHandleBuffer(
       ByProtocol,
       &gEfiGraphicsOutputProtocolGuid,
@@ -185,6 +189,7 @@ void CopyLoadSegments(Elf64_Ehdr* ehdr) {
 
     UINT64 segm_in_file = (UINT64)ehdr + phdr[i].p_offset;
     CopyMem((VOID*)phdr[i].p_vaddr, (VOID*)segm_in_file, phdr[i].p_filesz);
+
     UINTN remain_bytes = phdr[i].p_memsz - phdr[i].p_filesz;
     SetMem((VOID*)(phdr[i].p_vaddr + phdr[i].p_filesz), remain_bytes, 0);
   }
@@ -194,6 +199,7 @@ EFI_STATUS EFIAPI UefiMain(
     EFI_HANDLE image_handle,
     EFI_SYSTEM_TABLE* system_table) {
   EFI_STATUS status;
+
   Print(L"Hello, Mikan World!\n");
 
   CHAR8 memmap_buf[4096 * 4];
@@ -298,6 +304,7 @@ EFI_STATUS EFIAPI UefiMain(
     Print(L"failed to allocate pages: %r\n", status);
     Halt();
   }
+
   CopyLoadSegments(kernel_ehdr);
   Print(L"Kernel: 0x%0lx - 0x%0lx\n", kernel_first_addr, kernel_last_addr);
 
@@ -320,7 +327,6 @@ EFI_STATUS EFIAPI UefiMain(
       Halt();
     }
   }
-  // #@@range_end(exit_bs)
 
   UINT64 entry_addr = *(UINT64*)(kernel_first_addr + 24);
 
@@ -343,10 +349,12 @@ EFI_STATUS EFIAPI UefiMain(
       Halt();
   }
 
+  // #@@range_begin(pass_memory_map)
   typedef void EntryPointType(const struct FrameBufferConfig*,
                               const struct MemoryMap*);
   EntryPointType* entry_point = (EntryPointType*)entry_addr;
   entry_point(&config, &memmap);
+  // #@@range_end(pass_memory_map)
 
   Print(L"All done\n");
 
