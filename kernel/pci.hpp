@@ -40,7 +40,6 @@ namespace pci {
     uint8_t bus, device, function, header_type;
     ClassCode class_code;
   };
-  // #@@range_end(class_code)
 
   /** @brief CONFIG_ADDRESS に指定された整数を書き込む */
   void WriteAddress(uint32_t address);
