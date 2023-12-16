@@ -65,7 +65,6 @@ std::deque<Message>* main_queue;
 
 alignas(16) uint8_t kernel_main_stack[1024 * 1024];
 
-// #@@range_begin(main_function)
 extern "C" void KernelMainNewStack(
     const FrameBufferConfig& frame_buffer_config_ref,
     const MemoryMap& memory_map_ref) {
@@ -91,25 +90,27 @@ extern "C" void KernelMainNewStack(
   InitializeMouse();
   layer_manager->Draw({{0, 0}, ScreenSize()});
 
-  // #@@range_begin(call_init_timer)
   InitializeLAPICTimer();
-  // #@@range_end(call_init_timer)
 
   char str[128];
-  unsigned int count = 0;
 
   while (true) {
-    ++count;
-    sprintf(str, "%010u", count);
+    // #@@range_begin(show_tick)
+    __asm__("cli");
+    const auto tick = timer_manager->CurrentTick();
+    __asm__("sti");
+
+    sprintf(str, "%010lu", tick);
     FillRectangle(*main_window->Writer(), {24, 28}, {8 * 10, 16}, {0xc6, 0xc6, 0xc6});
     WriteString(*main_window->Writer(), {24, 28}, str, {0, 0, 0});
     layer_manager->Draw(main_window_layer_id);
 
     __asm__("cli");
     if (main_queue->size() == 0) {
-      __asm__("sti");
+      __asm__("sti\n\thlt");
       continue;
     }
+    // #@@range_end(show_tick)
 
     Message msg = main_queue->front();
     main_queue->pop_front();
