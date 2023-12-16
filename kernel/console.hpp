@@ -23,6 +23,10 @@ class Console {
   std::shared_ptr<Window> window_;
   const PixelColor fg_color_, bg_color_;
   char buffer_[kRows][kColumns + 1];
-  int cursor_row_,cursor_column_;
+  int cursor_row_, cursor_column_;
   unsigned int layer_id_;
 };
+
+extern Console* console;
+
+void InitializeConsole();
