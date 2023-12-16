@@ -30,6 +30,7 @@
 #include "window.hpp"
 #include "layer.hpp"
 #include "message.hpp"
+#include "timer.hpp"
 
 int printk(const char* format, ...) {
   va_list ap;
@@ -89,7 +90,10 @@ extern "C" void KernelMainNewStack(
   InitializeMainWindow();
   InitializeMouse();
   layer_manager->Draw({{0, 0}, ScreenSize()});
-// #@@range_end(main_function)
+
+  // #@@range_begin(call_init_timer)
+  InitializeLAPICTimer();
+  // #@@range_end(call_init_timer)
 
   char str[128];
   unsigned int count = 0;
@@ -114,6 +118,9 @@ extern "C" void KernelMainNewStack(
     switch (msg.type) {
     case Message::kInterruptXHCI:
       usb::xhci::ProcessEvents();
+      break;
+    case Message::kInterruptLAPICTimer:
+      printk("Timer interrupt\n");
       break;
     default:
       Log(kError, "Unknown message type: %d\n", msg.type);
