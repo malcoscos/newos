@@ -32,6 +32,7 @@
 #include "message.hpp"
 #include "timer.hpp"
 #include "acpi.hpp"
+#include "keyboard.hpp"
 
 int printk(const char* format, ...) {
   va_list ap;
@@ -92,13 +93,12 @@ extern "C" void KernelMainNewStack(
   InitializeMouse();
   layer_manager->Draw({{0, 0}, ScreenSize()});
 
-  // #@@range_begin(add_sample_timer)
   acpi::Initialize(acpi_table);
   InitializeLAPICTimer(*main_queue);
 
-  timer_manager->AddTimer(Timer(200, 2));
-  timer_manager->AddTimer(Timer(600, -1));
-  // #@@range_end(add_sample_timer)
+  // #@@range_begin(call_initkb)
+  InitializeKeyboard(*main_queue);
+  // #@@range_end(call_initkb)
 
   char str[128];
 
@@ -126,16 +126,15 @@ extern "C" void KernelMainNewStack(
     case Message::kInterruptXHCI:
       usb::xhci::ProcessEvents();
       break;
-    // #@@range_begin(timer_event)
     case Message::kTimerTimeout:
-      printk("Timer: timeout = %lu, value = %d\n",
-          msg.arg.timer.timeout, msg.arg.timer.value);
-      if (msg.arg.timer.value > 0) {
-        timer_manager->AddTimer(Timer(
-            msg.arg.timer.timeout + 100, msg.arg.timer.value + 1));
+      break;
+    // #@@range_begin(event_handling)
+    case Message::kKeyPush:
+      if (msg.arg.keyboard.ascii != 0) {
+        printk("%c", msg.arg.keyboard.ascii);
       }
       break;
-    // #@@range_end(timer_event)
+    // #@@range_end(event_handling)
     default:
       Log(kError, "Unknown message type: %d\n", msg.type);
     }
