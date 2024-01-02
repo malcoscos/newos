@@ -193,12 +193,15 @@ extern "C" void KernelMainNewStack(
   __asm__("sti");
   bool textbox_cursor_visible = false;
 
-  // #@@range_begin(call_inittask)
+  // #@@range_begin(wakeup_tasks)
   InitializeTask();
-  task_manager->NewTask().InitContext(TaskB, 45);
-  task_manager->NewTask().InitContext(TaskIdle, 0xdeadbeef);
-  task_manager->NewTask().InitContext(TaskIdle, 0xcafebabe);
-  // #@@range_end(call_inittask)
+  const uint64_t taskb_id = task_manager->NewTask()
+    .InitContext(TaskB, 45)
+    .Wakeup()
+    .ID();
+  task_manager->NewTask().InitContext(TaskIdle, 0xdeadbeef).Wakeup();
+  task_manager->NewTask().InitContext(TaskIdle, 0xcafebabe).Wakeup();
+  // #@@range_end(wakeup_tasks)
 
   char str[128];
 
@@ -212,13 +215,11 @@ extern "C" void KernelMainNewStack(
     WriteString(*main_window->Writer(), {24, 28}, str, {0, 0, 0});
     layer_manager->Draw(main_window_layer_id);
 
-    // #@@range_begin(mainloop)
     __asm__("cli");
     if (main_queue->size() == 0) {
       __asm__("sti\n\thlt");
       continue;
     }
-    // #@@range_end(mainloop)
 
     Message msg = main_queue->front();
     main_queue->pop_front();
@@ -239,9 +240,16 @@ extern "C" void KernelMainNewStack(
         layer_manager->Draw(text_window_layer_id);
       }
       break;
+    // #@@range_begin(sleep_wakeup_taskb)
     case Message::kKeyPush:
       InputTextWindow(msg.arg.keyboard.ascii);
+      if (msg.arg.keyboard.ascii == 's') {
+        printk("sleep TaskB: %s\n", task_manager->Sleep(taskb_id).Name());
+      } else if (msg.arg.keyboard.ascii == 'w') {
+        printk("wakeup TaskB: %s\n", task_manager->Wakeup(taskb_id).Name());
+      }
       break;
+    // #@@range_end(sleep_wakeup_taskb)
     default:
       Log(kError, "Unknown message type: %d\n", msg.type);
     }
