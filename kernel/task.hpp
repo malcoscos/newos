@@ -26,8 +26,11 @@ struct TaskContext {
 
 using TaskFunc = void (uint64_t, int64_t);
 
+class TaskManager;
+
 class Task {
  public:
+  static const int kDefaultLevel = 1;
   static const size_t kDefaultStackBytes = 4096;
 
   Task(uint64_t id);
@@ -38,6 +41,10 @@ class Task {
   Task& Wakeup();
   void SendMessage(const Message& msg);
   std::optional<Message> ReceiveMessage();
+
+  int Level() const { return level_; }
+  bool Running() const { return running_; }
+
  private:
   uint64_t id_;
   std::vector<uint64_t> stack_;
@@ -54,6 +61,7 @@ class Task {
 
 class TaskManager {
  public:
+  // level: 0 = lowest, kMaxLevel = highest
   static const int kMaxLevel = 3;
 
   TaskManager();
