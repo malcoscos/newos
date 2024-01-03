@@ -4,6 +4,15 @@
 #include "segment.hpp"
 #include "timer.hpp"
 
+namespace {
+  template <class T, class U>
+  void Erase(T& c, const U& value) {
+    auto it = std::remove(c.begin(), c.end(), value);
+    c.erase(it, c.end());
+  }
+}
+
+
 Task::Task(uint64_t id) : id_{id}, msgs_{} {
 }
 
@@ -67,7 +76,10 @@ std::optional<Message> Task::ReceiveMessage() {
 // #@@range_end(task_recvmsg)
 
 TaskManager::TaskManager() {
-  running_.push_back(&NewTask());
+  Task& task = NewTask()
+    .SetLevel(current_level_)
+    .SetRunning(true);
+  running_[current_level_].push_back(&task);
 }
 
 Task& TaskManager::NewTask() {
@@ -76,29 +88,44 @@ Task& TaskManager::NewTask() {
 }
 
 void TaskManager::SwitchTask(bool current_sleep) {
-  Task* current_task = running_.front();
-  running_.pop_front();
+  auto& level_queue = running_[current_level_];
+  Task* current_task = level_queue.front();
+  level_queue.pop_front();
   if (!current_sleep) {
-    running_.push_back(current_task);
+    level_queue.push_back(current_task);
   }
-  Task* next_task = running_.front();
+  if (level_queue.empty()) {
+    level_changed_ = true;
+  }
+
+  if (level_changed_) {
+    level_changed_ = false;
+    for (int lv = kMaxLevel; lv >= 0; --lv) {
+      if (!running_[lv].empty()) {
+        current_level_ = lv;
+        break;
+      }
+    }
+  }
+
+  Task* next_task = running_[current_level_].front();
 
   SwitchContext(&next_task->Context(), &current_task->Context());
 }
 
 void TaskManager::Sleep(Task* task) {
-  auto it = std::find(running_.begin(), running_.end(), task);
+  if (!task->Running()) {
+    return;
+  }
 
-  if (it == running_.begin()) {
+  task->SetRunning(false);
+
+  if (task == running_[current_level_].front()) {
     SwitchTask(true);
     return;
   }
 
-  if (it == running_.end()) {
-    return;
-  }
-
-  running_.erase(it);
+  Erase(running_[task->Level()], task);
 }
 
 Error TaskManager::Sleep(uint64_t id) {
