@@ -8,6 +8,8 @@
 #include <cstddef>
 #include <cstdio>
 
+#include <deque>
+#include <limits>
 #include <numeric>
 #include <vector>
 
@@ -19,25 +21,20 @@
 #include "console.hpp"
 #include "pci.hpp"
 #include "logger.hpp"
-#include "usb/memory.hpp"
-#include "usb/device.hpp"
-#include "usb/classdriver/mouse.hpp"
 #include "usb/xhci/xhci.hpp"
-#include "usb/xhci/trb.hpp"
 #include "interrupt.hpp"
 #include "asmfunc.h"
-#include "queue.hpp"
 #include "segment.hpp"
 #include "paging.hpp"
 #include "memory_manager.hpp"
 #include "window.hpp"
 #include "layer.hpp"
-
-char pixel_writer_buf[sizeof(RGBResv8BitPerColorPixelWriter)];
-PixelWriter* pixel_writer;
-
-char console_buf[sizeof(Console)];
-Console* console;
+#include "message.hpp"
+#include "timer.hpp"
+#include "acpi.hpp"
+#include "keyboard.hpp"
+#include "task.hpp"
+#include "terminal.hpp"
 
 int printk(const char* format, ...) {
   va_list ap;
@@ -52,324 +49,243 @@ int printk(const char* format, ...) {
   return result;
 }
 
-char memory_manager_buf[sizeof(BitmapMemoryManager)];
-BitmapMemoryManager* memory_manager;
+std::shared_ptr<ToplevelWindow> main_window;
+unsigned int main_window_layer_id;
+void InitializeMainWindow() {
+  main_window = std::make_shared<ToplevelWindow>(
+      160, 52, screen_config.pixel_format, "Hello Window");
 
-unsigned int mouse_layer_id;
-Vector2D<int> screen_size;
-Vector2D<int> mouse_position;
+  main_window_layer_id = layer_manager->NewLayer()
+    .SetWindow(main_window)
+    .SetDraggable(true)
+    .Move({300, 100})
+    .ID();
 
-void MouseObserver(uint8_t buttons, int8_t displacement_x, int8_t displacement_y) {
-  static unsigned int mouse_drag_layer_id = 0;
-  static uint8_t previous_buttons = 0;
-
-  const auto oldpos = mouse_position;
-  auto newpos = mouse_position + Vector2D<int>{displacement_x, displacement_y};
-  newpos = ElementMin(newpos, screen_size + Vector2D<int>{-1, -1});
-  mouse_position = ElementMax(newpos, {0, 0});
-
-  const auto posdiff = mouse_position - oldpos;
-
-  layer_manager->Move(mouse_layer_id, mouse_position);
-
-  const bool previous_left_pressed = (previous_buttons & 0x01);
-  const bool left_pressed = (buttons & 0x01);
-  if (!previous_left_pressed && left_pressed) {
-    auto layer = layer_manager->FindLayerByPosition(mouse_position, mouse_layer_id);
-    if (layer && layer->IsDraggable()) {
-      mouse_drag_layer_id = layer->ID();
-    }
-  } else if (previous_left_pressed && left_pressed) {
-    if (mouse_drag_layer_id > 0) {
-      layer_manager->MoveRelative(mouse_drag_layer_id, posdiff);
-    }
-  } else if (previous_left_pressed && !left_pressed) {
-    mouse_drag_layer_id = 0;
-  }
-
-  previous_buttons = buttons;
+  layer_manager->UpDown(main_window_layer_id, std::numeric_limits<int>::max());
 }
 
-void SwitchEhci2Xhci(const pci::Device& xhc_dev) {
-  bool intel_ehc_exist = false;
-  for (int i = 0; i < pci::num_device; ++i) {
-    if (pci::devices[i].class_code.Match(0x0cu, 0x03u, 0x20u) /* EHCI */ &&
-        0x8086 == pci::ReadVendorId(pci::devices[i])) {
-      intel_ehc_exist = true;
-      break;
-    }
-  }
-  if (!intel_ehc_exist) {
+std::shared_ptr<ToplevelWindow> text_window;
+unsigned int text_window_layer_id;
+void InitializeTextWindow() {
+  const int win_w = 160;
+  const int win_h = 52;
+
+  text_window = std::make_shared<ToplevelWindow>(
+      win_w, win_h, screen_config.pixel_format, "Text Box Test");
+  DrawTextbox(*text_window->InnerWriter(), {0, 0}, text_window->InnerSize());
+
+  text_window_layer_id = layer_manager->NewLayer()
+    .SetWindow(text_window)
+    .SetDraggable(true)
+    .Move({500, 100})
+    .ID();
+
+  layer_manager->UpDown(text_window_layer_id, std::numeric_limits<int>::max());
+}
+
+int text_window_index;
+
+void DrawTextCursor(bool visible) {
+  const auto color = visible ? ToColor(0) : ToColor(0xffffff);
+  const auto pos = Vector2D<int>{4 + 8*text_window_index, 5};
+  FillRectangle(*text_window->InnerWriter(), pos, {7, 15}, color);
+}
+
+void InputTextWindow(char c) {
+  if (c == 0) {
     return;
   }
 
-  uint32_t superspeed_ports = pci::ReadConfReg(xhc_dev, 0xdc); // USB3PRM
-  pci::WriteConfReg(xhc_dev, 0xd8, superspeed_ports); // USB3_PSSEN
-  uint32_t ehci2xhci_ports = pci::ReadConfReg(xhc_dev, 0xd4); // XUSB2PRM
-  pci::WriteConfReg(xhc_dev, 0xd0, ehci2xhci_ports); // XUSB2PR
-  Log(kDebug, "SwitchEhci2Xhci: SS = %02, xHCI = %02x\n",
-      superspeed_ports, ehci2xhci_ports);
+  auto pos = []() { return Vector2D<int>{4 + 8*text_window_index, 6}; };
+
+  const int max_chars = (text_window->InnerSize().x - 8) / 8 - 1;
+  if (c == '\b' && text_window_index > 0) {
+    DrawTextCursor(false);
+    --text_window_index;
+    FillRectangle(*text_window->InnerWriter(), pos(), {8, 16}, ToColor(0xffffff));
+    DrawTextCursor(true);
+  } else if (c >= ' ' && text_window_index < max_chars) {
+    DrawTextCursor(false);
+    WriteAscii(*text_window->InnerWriter(), pos(), c, ToColor(0));
+    ++text_window_index;
+    DrawTextCursor(true);
+  }
+
+  layer_manager->Draw(text_window_layer_id);
 }
 
-usb::xhci::Controller* xhc;
+std::shared_ptr<ToplevelWindow> task_b_window;
+unsigned int task_b_window_layer_id;
+void InitializeTaskBWindow() {
+  task_b_window = std::make_shared<ToplevelWindow>(
+      160, 52, screen_config.pixel_format, "TaskB Window");
 
-struct Message {
-  enum Type {
-    kInterruptXHCI,
-  } type;
-};
+  task_b_window_layer_id = layer_manager->NewLayer()
+    .SetWindow(task_b_window)
+    .SetDraggable(true)
+    .Move({100, 100})
+    .ID();
 
-ArrayQueue<Message>* main_queue;
+  layer_manager->UpDown(task_b_window_layer_id, std::numeric_limits<int>::max());
+}
 
-__attribute__((interrupt))
-void IntHandlerXHCI(InterruptFrame* frame) {
-  main_queue->Push(Message{Message::kInterruptXHCI});
-  NotifyEndOfInterrupt();
+void TaskB(uint64_t task_id, int64_t data) {
+  printk("TaskB: task_id=%lu, data=%lu\n", task_id, data);
+  char str[128];
+  int count = 0;
+
+  __asm__("cli");
+  Task& task = task_manager->CurrentTask();
+  __asm__("sti");
+
+  while (true) {
+    ++count;
+    sprintf(str, "%010d", count);
+    FillRectangle(*task_b_window->InnerWriter(), {20, 4}, {8 * 10, 16}, {0xc6, 0xc6, 0xc6});
+    WriteString(*task_b_window->InnerWriter(), {20, 4}, str, {0, 0, 0});
+
+    Message msg{Message::kLayer, task_id};
+    msg.arg.layer.layer_id = task_b_window_layer_id;
+    msg.arg.layer.op = LayerOperation::Draw;
+    __asm__("cli");
+    task_manager->SendMessage(1, msg);
+    __asm__("sti");
+
+    while (true) {
+      __asm__("cli");
+      auto msg = task.ReceiveMessage();
+      if (!msg) {
+        task.Sleep();
+        __asm__("sti");
+        continue;
+      }
+
+      if (msg->type == Message::kLayerFinish) {
+        break;
+      }
+    }
+  }
 }
 
 alignas(16) uint8_t kernel_main_stack[1024 * 1024];
 
 extern "C" void KernelMainNewStack(
     const FrameBufferConfig& frame_buffer_config_ref,
-    const MemoryMap& memory_map_ref) {
-  FrameBufferConfig frame_buffer_config{frame_buffer_config_ref};
+    const MemoryMap& memory_map_ref,
+    const acpi::RSDP& acpi_table) {
   MemoryMap memory_map{memory_map_ref};
 
-  switch (frame_buffer_config.pixel_format) {
-    case kPixelRGBResv8BitPerColor:
-      pixel_writer = new(pixel_writer_buf)
-        RGBResv8BitPerColorPixelWriter{frame_buffer_config};
-      break;
-    case kPixelBGRResv8BitPerColor:
-      pixel_writer = new(pixel_writer_buf)
-        BGRResv8BitPerColorPixelWriter{frame_buffer_config};
-      break;
-  }
+  InitializeGraphics(frame_buffer_config_ref);
+  InitializeConsole();
 
-  DrawDesktop(*pixel_writer);
-
-  console = new(console_buf) Console{
-    kDesktopFGColor, kDesktopBGColor
-  };
-  console->SetWriter(pixel_writer);
   printk("Welcome to MikanOS!\n");
   SetLogLevel(kWarn);
 
-  SetupSegments();
+  InitializeSegmentation();
+  InitializePaging();
+  InitializeMemoryManager(memory_map);
+  InitializeInterrupt();
 
-  const uint16_t kernel_cs = 1 << 3;
-  const uint16_t kernel_ss = 2 << 3;
-  SetDSAll(0);
-  SetCSSS(kernel_cs, kernel_ss);
+  InitializePCI();
 
-  SetupIdentityPageTable();
+  InitializeLayer();
+  InitializeMainWindow();
+  InitializeTextWindow();
+  InitializeTaskBWindow();
+  layer_manager->Draw({{0, 0}, ScreenSize()});
+  active_layer->Activate(task_b_window_layer_id);
 
-  ::memory_manager = new(memory_manager_buf) BitmapMemoryManager;
+  acpi::Initialize(acpi_table);
+  InitializeLAPICTimer();
 
-  const auto memory_map_base = reinterpret_cast<uintptr_t>(memory_map.buffer);
-  uintptr_t available_end = 0;
-  for (uintptr_t iter = memory_map_base;
-       iter < memory_map_base + memory_map.map_size;
-       iter += memory_map.descriptor_size) {
-    auto desc = reinterpret_cast<const MemoryDescriptor*>(iter);
-    if (available_end < desc->physical_start) {
-      memory_manager->MarkAllocated(
-          FrameID{available_end / kBytesPerFrame},
-          (desc->physical_start - available_end) / kBytesPerFrame);
-    }
+  const int kTextboxCursorTimer = 1;
+  const int kTimer05Sec = static_cast<int>(kTimerFreq * 0.5);
+  timer_manager->AddTimer(Timer{kTimer05Sec, kTextboxCursorTimer});
+  bool textbox_cursor_visible = false;
 
-    const auto physical_end =
-      desc->physical_start + desc->number_of_pages * kUEFIPageSize;
-    if (IsAvailable(static_cast<MemoryType>(desc->type))) {
-      available_end = physical_end;
-    } else {
-      memory_manager->MarkAllocated(
-          FrameID{desc->physical_start / kBytesPerFrame},
-          desc->number_of_pages * kUEFIPageSize / kBytesPerFrame);
-    }
-  }
-  memory_manager->SetMemoryRange(FrameID{1}, FrameID{available_end / kBytesPerFrame});
-
-  if (auto err = InitializeHeap(*memory_manager)) {
-    Log(kError, "failed to allocate pages: %s at %s:%d\n",
-        err.Name(), err.File(), err.Line());
-    exit(1);
-  }
-
-  std::array<Message, 32> main_queue_data;
-  ArrayQueue<Message> main_queue{main_queue_data};
-  ::main_queue = &main_queue;
-
-  auto err = pci::ScanAllBus();
-  Log(kDebug, "ScanAllBus: %s\n", err.Name());
-
-  for (int i = 0; i < pci::num_device; ++i) {
-    const auto& dev = pci::devices[i];
-    auto vendor_id = pci::ReadVendorId(dev);
-    auto class_code = pci::ReadClassCode(dev.bus, dev.device, dev.function);
-    Log(kDebug, "%d.%d.%d: vend %04x, class %08x, head %02x\n",
-        dev.bus, dev.device, dev.function,
-        vendor_id, class_code, dev.header_type);
-  }
-
-  // Intel 製を優先して xHC を探す
-  pci::Device* xhc_dev = nullptr;
-  for (int i = 0; i < pci::num_device; ++i) {
-    if (pci::devices[i].class_code.Match(0x0cu, 0x03u, 0x30u)) {
-      xhc_dev = &pci::devices[i];
-
-      if (0x8086 == pci::ReadVendorId(*xhc_dev)) {
-        break;
-      }
-    }
-  }
-
-  if (xhc_dev) {
-    Log(kInfo, "xHC has been found: %d.%d.%d\n",
-        xhc_dev->bus, xhc_dev->device, xhc_dev->function);
-  }
-
-  SetIDTEntry(idt[InterruptVector::kXHCI], MakeIDTAttr(DescriptorType::kInterruptGate, 0),
-              reinterpret_cast<uint64_t>(IntHandlerXHCI), kernel_cs);
-  LoadIDT(sizeof(idt) - 1, reinterpret_cast<uintptr_t>(&idt[0]));
-
-  const uint8_t bsp_local_apic_id =
-    *reinterpret_cast<const uint32_t*>(0xfee00020) >> 24;
-  pci::ConfigureMSIFixedDestination(
-      *xhc_dev, bsp_local_apic_id,
-      pci::MSITriggerMode::kLevel, pci::MSIDeliveryMode::kFixed,
-      InterruptVector::kXHCI, 0);
-
-  const WithError<uint64_t> xhc_bar = pci::ReadBar(*xhc_dev, 0);
-  Log(kDebug, "ReadBar: %s\n", xhc_bar.error.Name());
-  const uint64_t xhc_mmio_base = xhc_bar.value & ~static_cast<uint64_t>(0xf);
-  Log(kDebug, "xHC mmio_base = %08lx\n", xhc_mmio_base);
-
-  usb::xhci::Controller xhc{xhc_mmio_base};
-
-  if (0x8086 == pci::ReadVendorId(*xhc_dev)) {
-    SwitchEhci2Xhci(*xhc_dev);
-  }
-  {
-    auto err = xhc.Initialize();
-    Log(kDebug, "xhc.Initialize: %s\n", err.Name());
-  }
-
-  Log(kInfo, "xHC starting\n");
-  xhc.Run();
-
-  ::xhc = &xhc;
-
-  usb::HIDMouseDriver::default_observer = MouseObserver;
-
-  for (int i = 1; i <= xhc.MaxPorts(); ++i) {
-    auto port = xhc.PortAt(i);
-    Log(kDebug, "Port %d: IsConnected=%d\n", i, port.IsConnected());
-
-    if (port.IsConnected()) {
-      if (auto err = ConfigurePort(xhc, port)) {
-        Log(kError, "failed to configure port: %s at %s:%d\n",
-            err.Name(), err.File(), err.Line());
-        continue;
-      }
-    }
-  }
-
-  screen_size.x = frame_buffer_config.horizontal_resolution;
-  screen_size.y = frame_buffer_config.vertical_resolution;
-
-  auto bgwindow = std::make_shared<Window>(
-      screen_size.x, screen_size.y, frame_buffer_config.pixel_format);
-  auto bgwriter = bgwindow->Writer();
-
-  DrawDesktop(*bgwriter);
-
-  auto mouse_window = std::make_shared<Window>(
-      kMouseCursorWidth, kMouseCursorHeight, frame_buffer_config.pixel_format);
-  mouse_window->SetTransparentColor(kMouseTransparentColor);
-  DrawMouseCursor(mouse_window->Writer(), {0, 0});
-  mouse_position = {200, 200};
-
-  auto main_window = std::make_shared<Window>(
-      160, 52, frame_buffer_config.pixel_format);
-  DrawWindow(*main_window->Writer(), "Hello Window");
-
-  // #@@range_begin(make_console_window)
-  auto console_window = std::make_shared<Window>(
-      Console::kColumns * 8, Console::kRows * 16, frame_buffer_config.pixel_format);
-  console->SetWindow(console_window);
-  // #@@range_end(make_console_window)
-
-  FrameBuffer screen;
-  if (auto err = screen.Initialize(frame_buffer_config)) {
-    Log(kError, "failed to initialize frame buffer: %s at %s:%d\n",
-        err.Name(), err.File(), err.Line());
-  }
-
-  layer_manager = new LayerManager;
-  layer_manager->SetWriter(&screen);
-
-  auto bglayer_id = layer_manager->NewLayer()
-    .SetWindow(bgwindow)
-    .Move({0, 0})
+  InitializeTask();
+  Task& main_task = task_manager->CurrentTask();
+  const uint64_t taskb_id = task_manager->NewTask()
+    .InitContext(TaskB, 45)
+    .Wakeup()
     .ID();
-  mouse_layer_id = layer_manager->NewLayer()
-    .SetWindow(mouse_window)
-    .Move(mouse_position)
+  // #@@range_begin(start_taskterm)
+  const uint64_t task_terminal_id = task_manager->NewTask()
+    .InitContext(TaskTerminal, 0)
+    .Wakeup()
     .ID();
-  auto main_window_layer_id = layer_manager->NewLayer()
-    .SetWindow(main_window)
-    .SetDraggable(true)
-    .Move({300, 100})
-    .ID();
-  // #@@range_begin(make_console_layer)
-  console->SetLayerID(layer_manager->NewLayer()
-    .SetWindow(console_window)
-    .Move({0, 0})
-    .ID());
-  // #@@range_end(make_console_layer)
+  // #@@range_end(start_taskterm)
 
-  // #@@range_begin(draw_all_layer)
-  layer_manager->UpDown(bglayer_id, 0);
-  layer_manager->UpDown(console->LayerID(), 1);
-  layer_manager->UpDown(main_window_layer_id, 2);
-  layer_manager->UpDown(mouse_layer_id, 3);
-  layer_manager->Draw({{0, 0}, screen_size});
-  // #@@range_end(draw_all_layer)
+  usb::xhci::Initialize();
+  InitializeKeyboard();
+  InitializeMouse();
 
   char str[128];
-  unsigned int count = 0;
 
   while (true) {
-    // #@@range_begin(draw_window_layer)
-    ++count;
-    sprintf(str, "%010u", count);
-    FillRectangle(*main_window->Writer(), {24, 28}, {8 * 10, 16}, {0xc6, 0xc6, 0xc6});
-    WriteString(*main_window->Writer(), {24, 28}, str, {0, 0, 0});
+    __asm__("cli");
+    const auto tick = timer_manager->CurrentTick();
+    __asm__("sti");
+
+    sprintf(str, "%010lu", tick);
+    FillRectangle(*main_window->InnerWriter(), {20, 4}, {8 * 10, 16}, {0xc6, 0xc6, 0xc6});
+    WriteString(*main_window->InnerWriter(), {20, 4}, str, {0, 0, 0});
     layer_manager->Draw(main_window_layer_id);
-    // #@@range_end(draw_window_layer)
 
     __asm__("cli");
-    if (main_queue.Count() == 0) {
+    auto msg = main_task.ReceiveMessage();
+    if (!msg) {
+      main_task.Sleep();
       __asm__("sti");
       continue;
     }
 
-    Message msg = main_queue.Front();
-    main_queue.Pop();
     __asm__("sti");
 
-    switch (msg.type) {
+    switch (msg->type) {
     case Message::kInterruptXHCI:
-      while (xhc.PrimaryEventRing()->HasFront()) {
-        if (auto err = ProcessEvent(xhc)) {
-          Log(kError, "Error while ProcessEvent: %s at %s:%d\n",
-              err.Name(), err.File(), err.Line());
-        }
+      usb::xhci::ProcessEvents();
+      break;
+    // #@@range_begin(send_timermsg)
+    case Message::kTimerTimeout:
+      if (msg->arg.timer.value == kTextboxCursorTimer) {
+        __asm__("cli");
+        timer_manager->AddTimer(
+            Timer{msg->arg.timer.timeout + kTimer05Sec, kTextboxCursorTimer});
+        __asm__("sti");
+        textbox_cursor_visible = !textbox_cursor_visible;
+        DrawTextCursor(textbox_cursor_visible);
+        layer_manager->Draw(text_window_layer_id);
+
+        __asm__("cli");
+        task_manager->SendMessage(task_terminal_id, *msg);
+        __asm__("sti");
       }
       break;
+    // #@@range_end(send_timermsg)
+    case Message::kKeyPush:
+      if (auto act = active_layer->GetActive(); act == text_window_layer_id) {
+        InputTextWindow(msg->arg.keyboard.ascii);
+      } else if (act == task_b_window_layer_id) {
+        if (msg->arg.keyboard.ascii == 's') {
+          printk("sleep TaskB: %s\n", task_manager->Sleep(taskb_id).Name());
+        } else if (msg->arg.keyboard.ascii == 'w') {
+          printk("wakeup TaskB: %s\n", task_manager->Wakeup(taskb_id).Name());
+        }
+      } else {
+        printk("key push not handled: keycode %02x, ascii %02x\n",
+            msg->arg.keyboard.keycode,
+            msg->arg.keyboard.ascii);
+      }
+      break;
+    case Message::kLayer:
+      ProcessLayerMessage(*msg);
+      __asm__("cli");
+      task_manager->SendMessage(msg->src_task, Message{Message::kLayerFinish});
+      __asm__("sti");
+      break;
     default:
-      Log(kError, "Unknown message type: %d\n", msg.type);
+      Log(kError, "Unknown message type: %d\n", msg->type);
     }
   }
 }

@@ -1,11 +1,22 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include "frame_buffer_config.hpp"
 
 struct PixelColor {
   uint8_t r, g, b;
 };
+
+// #@@range_begin(tocolor)
+constexpr PixelColor ToColor(uint32_t c) {
+  return {
+    static_cast<uint8_t>((c >> 16) & 0xff),
+    static_cast<uint8_t>((c >> 8) & 0xff),
+    static_cast<uint8_t>(c & 0xff)
+  };
+}
+// #@@range_end(tocolor)
 
 inline bool operator==(const PixelColor& lhs, const PixelColor& rhs) {
   return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b;
@@ -63,7 +74,6 @@ struct Rectangle {
   Vector2D<T> pos, size;
 };
 
-// #@@range_begin(rect_inetersection)
 template <typename T, typename U>
 Rectangle<T> operator&(const Rectangle<T>& lhs, const Rectangle<U>& rhs) {
   const auto lhs_end = lhs.pos + lhs.size;
@@ -77,7 +87,6 @@ Rectangle<T> operator&(const Rectangle<T>& lhs, const Rectangle<U>& rhs) {
   auto new_size = ElementMin(lhs_end, rhs_end) - new_pos;
   return {new_pos, new_size};
 }
-// #@@range_end(rect_inetersection)
 
 class PixelWriter {
  public:
@@ -126,3 +135,9 @@ const PixelColor kDesktopBGColor{45, 118, 237};
 const PixelColor kDesktopFGColor{255, 255, 255};
 
 void DrawDesktop(PixelWriter& writer);
+
+extern FrameBufferConfig screen_config;
+extern PixelWriter* screen_writer;
+Vector2D<int> ScreenSize();
+
+void InitializeGraphics(const FrameBufferConfig& screen_config);

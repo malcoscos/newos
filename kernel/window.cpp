@@ -3,6 +3,29 @@
 #include "logger.hpp"
 #include "font.hpp"
 
+// #@@range_begin(draw_tbox)
+namespace {
+  void DrawTextbox(PixelWriter& writer, Vector2D<int> pos, Vector2D<int> size,
+                   const PixelColor& background,
+                   const PixelColor& border_light,
+                   const PixelColor& border_dark) {
+    auto fill_rect =
+      [&writer](Vector2D<int> pos, Vector2D<int> size, const PixelColor& c) {
+        FillRectangle(writer, pos, size, c);
+      };
+
+    // fill main box
+    fill_rect(pos + Vector2D<int>{1, 1}, size - Vector2D<int>{2, 2}, background);
+// #@@range_end(draw_tbox)
+
+    // draw border lines
+    fill_rect(pos,                            {size.x, 1}, border_dark);
+    fill_rect(pos,                            {1, size.y}, border_dark);
+    fill_rect(pos + Vector2D<int>{0, size.y}, {size.x, 1}, border_light);
+    fill_rect(pos + Vector2D<int>{size.x, 0}, {1, size.y}, border_light);
+  }
+}
+
 Window::Window(int width, int height, PixelFormat shadow_format) : width_{width}, height_{height} {
   data_.resize(height);
   for (int y = 0; y < height; ++y) {
@@ -21,7 +44,6 @@ Window::Window(int width, int height, PixelFormat shadow_format) : width_{width}
   }
 }
 
-// #@@range_begin(drawto)
 void Window::DrawTo(FrameBuffer& dst, Vector2D<int> pos, const Rectangle<int>& area) {
   if (!transparent_color_) {
     Rectangle<int> window_area{pos, Size()};
@@ -29,7 +51,6 @@ void Window::DrawTo(FrameBuffer& dst, Vector2D<int> pos, const Rectangle<int>& a
     dst.Copy(intersection.pos, shadow_buffer_, {intersection.pos - pos, intersection.size});
     return;
   }
-// #@@range_end(drawto)
 
   const auto tc = transparent_color_.value();
   auto& writer = dst.Writer();
@@ -80,6 +101,25 @@ void Window::Move(Vector2D<int> dst_pos, const Rectangle<int>& src) {
   shadow_buffer_.Move(dst_pos, src);
 }
 
+ToplevelWindow::ToplevelWindow(int width, int height, PixelFormat shadow_format,
+                               const std::string& title)
+    : Window{width, height, shadow_format}, title_{title} {
+  DrawWindow(*Writer(), title_.c_str());
+}
+
+void ToplevelWindow::Activate() {
+  Window::Activate();
+  DrawWindowTitle(*Writer(), title_.c_str(), true);
+}
+
+void ToplevelWindow::Deactivate() {
+  Window::Deactivate();
+  DrawWindowTitle(*Writer(), title_.c_str(), false);
+}
+
+Vector2D<int> ToplevelWindow::InnerSize() const {
+  return Size() - kTopLeftMargin - kBottomRightMargin;
+}
 
 namespace {
   const int kCloseButtonWidth = 16;
@@ -100,14 +140,6 @@ namespace {
     ".$$$$$$$$$$$$$$@",
     "@@@@@@@@@@@@@@@@",
   };
-
-  constexpr PixelColor ToColor(uint32_t c) {
-    return {
-      static_cast<uint8_t>((c >> 16) & 0xff),
-      static_cast<uint8_t>((c >> 8) & 0xff),
-      static_cast<uint8_t>(c & 0xff)
-    };
-  }
 }
 
 void DrawWindow(PixelWriter& writer, const char* title) {
@@ -124,10 +156,32 @@ void DrawWindow(PixelWriter& writer, const char* title) {
   fill_rect({win_w - 2, 1}, {1, win_h - 2},         0x848484);
   fill_rect({win_w - 1, 0}, {1, win_h},             0x000000);
   fill_rect({2, 2},         {win_w - 4, win_h - 4}, 0xc6c6c6);
-  fill_rect({3, 3},         {win_w - 6, 18},        0x000084);
   fill_rect({1, win_h - 2}, {win_w - 2, 1},         0x848484);
   fill_rect({0, win_h - 1}, {win_w, 1},             0x000000);
 
+  DrawWindowTitle(writer, title, false);
+}
+
+// #@@range_begin(draw_term)
+void DrawTextbox(PixelWriter& writer, Vector2D<int> pos, Vector2D<int> size) {
+  DrawTextbox(writer, pos, size,
+              ToColor(0xffffff), ToColor(0xc6c6c6), ToColor(0x848484));
+}
+
+void DrawTerminal(PixelWriter& writer, Vector2D<int> pos, Vector2D<int> size) {
+  DrawTextbox(writer, pos, size,
+              ToColor(0x000000), ToColor(0xc6c6c6), ToColor(0x848484));
+}
+// #@@range_end(draw_term)
+
+void DrawWindowTitle(PixelWriter& writer, const char* title, bool active) {
+  const auto win_w = writer.Width();
+  uint32_t bgcolor = 0x848484;
+  if (active) {
+    bgcolor = 0x000084;
+  }
+
+  FillRectangle(writer, {3, 3}, {win_w - 6, 18}, ToColor(bgcolor));
   WriteString(writer, {24, 4}, title, ToColor(0xffffff));
 
   for (int y = 0; y < kCloseButtonHeight; ++y) {
