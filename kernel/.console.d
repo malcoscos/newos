@@ -37,10 +37,19 @@ console.o: console.cpp console.hpp \
   /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/limits.h \
   /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/__split_buffer \
   /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/optional \
-  frame_buffer.hpp error.hpp \
+  /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/string \
+  /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/string_view \
+  /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/__string \
   /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/cstdio \
   /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/stdio.h \
+  /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/cwchar \
+  /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/cwctype \
+  /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/cctype \
+  /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/ctype.h \
+  /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/wctype.h \
+  frame_buffer.hpp error.hpp \
   /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/array font.hpp \
   layer.hpp /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/map \
   /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/__tree \
-  /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/__node_handle
+  /home/vscode/osbook/devenv/x86_64-elf/include/c++/v1/__node_handle \
+  message.hpp
