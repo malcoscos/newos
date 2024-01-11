@@ -6,8 +6,6 @@
 #include "layer.hpp"
 #include "pci.hpp"
 
-
-// #@@range_begin(term_ctor)
 Terminal::Terminal() {
   window_ = std::make_shared<ToplevelWindow>(
       kColumns * 8 + 8 + ToplevelWindow::kMarginX,
@@ -21,9 +19,11 @@ Terminal::Terminal() {
     .SetDraggable(true)
     .ID();
 
+  // #@@range_begin(resize_history)
   Print(">");
+  cmd_history_.resize(8);
+  // #@@range_end(resize_history)
 }
-// #@@range_end(term_ctor)
 
 Rectangle<int> Terminal::BlinkCursor() {
   cursor_visible_ = !cursor_visible_;
@@ -48,10 +48,17 @@ Rectangle<int> Terminal::InputKey(
 
   Rectangle<int> draw_area{CalcCursorPos(), {8*2, 16}};
 
-  // #@@range_begin(input_key)
+  // #@@range_begin(handle_enter)
   if (ascii == '\n') {
     linebuf_[linebuf_index_] = 0;
+    if (linebuf_index_ > 0) {
+      cmd_history_.pop_back();
+      cmd_history_.push_front(linebuf_);
+    }
     linebuf_index_ = 0;
+    cmd_history_index_ = -1;
+  // #@@range_end(handle_enter)
+
     cursor_.x = 0;
     if (cursor_.y < kRows - 1) {
       ++cursor_.y;
@@ -63,7 +70,6 @@ Rectangle<int> Terminal::InputKey(
     draw_area.pos = ToplevelWindow::kTopLeftMargin;
     draw_area.size = window_->InnerSize();
   } else if (ascii == '\b') {
-  // #@@range_end(input_key)
     if (cursor_.x > 0) {
       --cursor_.x;
       FillRectangle(*window_->Writer(), CalcCursorPos(), {8, 16}, {0, 0, 0});
@@ -80,7 +86,13 @@ Rectangle<int> Terminal::InputKey(
       WriteAscii(*window_->Writer(), CalcCursorPos(), ascii, {255, 255, 255});
       ++cursor_.x;
     }
+  // #@@range_begin(handle_arrow)
+  } else if (keycode == 0x51) { // down arrow
+    draw_area = HistoryUpDown(-1);
+  } else if (keycode == 0x52) { // up arrow
+    draw_area = HistoryUpDown(1);
   }
+  // #@@range_end(handle_arrow)
 
   DrawCursor(true);
 
@@ -97,7 +109,6 @@ void Terminal::Scroll1() {
                 {4, 4 + 16*cursor_.y}, {8*kColumns, 16}, {0, 0, 0});
 }
 
-// #@@range_begin(execute_line)
 void Terminal::ExecuteLine() {
   char* command = &linebuf_[0];
   char* first_arg = strchr(&linebuf_[0], ' ');
@@ -131,9 +142,7 @@ void Terminal::ExecuteLine() {
     Print("\n");
   }
 }
-// #@@range_end(execute_line)
 
-// #@@range_begin(print)
 void Terminal::Print(const char* s) {
   DrawCursor(false);
 
@@ -163,7 +172,34 @@ void Terminal::Print(const char* s) {
 
   DrawCursor(true);
 }
-// #@@range_end(print)
+
+// #@@range_begin(history_updown)
+Rectangle<int> Terminal::HistoryUpDown(int direction) {
+  if (direction == -1 && cmd_history_index_ >= 0) {
+    --cmd_history_index_;
+  } else if (direction == 1 && cmd_history_index_ + 1 < cmd_history_.size()) {
+    ++cmd_history_index_;
+  }
+
+  cursor_.x = 1;
+  const auto first_pos = CalcCursorPos();
+
+  Rectangle<int> draw_area{first_pos, {8*(kColumns - 1), 16}};
+  FillRectangle(*window_->Writer(), draw_area.pos, draw_area.size, {0, 0, 0});
+
+  const char* history = "";
+  if (cmd_history_index_ >= 0) {
+    history = &cmd_history_[cmd_history_index_][0];
+  }
+
+  strcpy(&linebuf_[0], history);
+  linebuf_index_ = strlen(history);
+
+  WriteString(*window_->Writer(), first_pos, history, {255, 255, 255});
+  cursor_.x = linebuf_index_ + 1;
+  return draw_area;
+}
+// #@@range_end(history_updown)
 
 void TaskTerminal(uint64_t task_id, int64_t data) {
   __asm__("cli");
