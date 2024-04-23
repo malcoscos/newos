@@ -4,16 +4,18 @@ CXXFLAGS += -O2 -Wall -g --target=x86_64-elf -ffreestanding -mcmodel=large \
             -fno-exceptions -fno-rtti -std=c++17
 LDFLAGS += --entry main -z norelro --image-base 0xffff800000000000 --static
 
+#@range_begin(add_objs)
+OBJS += ../syscall.o ../newlib_support.o
+#@range_end(add_objs)
+
 .PHONY: all
 all: $(TARGET)
 
 $(TARGET): $(OBJS) Makefile
 	ld.lld $(LDFLAGS) -o $@ $(OBJS) -lc -lc++ -lc++abi
 
-#@range_begin(rule_c)
 %.o: %.c Makefile
 	clang $(CPPFLAGS) $(CFLAGS) -c $< -o $@
-#@range_end(rule_c)
 
 %.o: %.cpp Makefile
 	clang++ $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
